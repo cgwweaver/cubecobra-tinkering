@@ -1,0 +1,61 @@
+name: CubeCobra export -> Parquet
+
+on:
+  workflow_dispatch: {}
+  # Uncomment when you're happy with the manual runs:
+  # schedule:
+  #   - cron: "0 6 1 */3 *"   # 06:00 UTC, 1st of every 3rd month
+
+jobs:
+  sync-and-convert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install python deps
+        run: pip install pandas pyarrow
+
+      - name: Download raw JSON (public bucket, no AWS CLI needed)
+        run: |
+          set -e
+          mkdir -p raw
+          BASE="https://cubecobra-public.s3.amazonaws.com"
+
+          curl -fsSL -o raw/cubes.json                "$BASE/export/cubes.json"
+          curl -fsSL -o raw/export_indexToOracle.json  "$BASE/export/indexToOracleMap.json"
+          curl -fsSL -o raw/cards_indexToOracle.json   "$BASE/cards/indexToOracle.json"
+          curl -fsSL -o raw/carddict.json              "$BASE/cards/carddict.json"
+          curl -fsSL -o raw/metadatadict.json          "$BASE/cards/metadatadict.json"
+          curl -fsSL -o raw/oracleToId.json            "$BASE/cards/oracleToId.json"
+          curl -fsSL -o raw/manifest.json              "$BASE/cards/manifest.json"
+          curl -fsSL -o raw/oracleTagDict.json         "$BASE/cards/oracleTagDict.json"
+          curl -fsSL -o raw/oracleTagNames.json        "$BASE/cards/oracleTagNames.json"
+
+          echo "---- raw file sizes ----"
+          ls -lh raw/
+
+      - name: Sanity-check the two indexToOracle maps are actually identical
+        run: |
+          if diff -q raw/export_indexToOracle.json raw/cards_indexToOracle.json > /dev/null; then
+            echo "MATCH: export/indexToOracleMap.json == cards/indexToOracle.json"
+          else
+            echo "MISMATCH: the two maps differ - keep downloading both!"
+          fi
+
+      - name: Convert JSON -> Parquet
+        run: python scripts/convert_to_parquet.py
+
+      - name: Report output sizes
+        run: |
+          echo "---- processed (parquet) file sizes ----"
+          ls -lh processed/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cubecobra-parquet
+          path: processed/
+          retention-days: 90
